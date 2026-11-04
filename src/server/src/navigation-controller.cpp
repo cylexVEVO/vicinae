@@ -348,13 +348,16 @@ void NavigationController::setCloseOnFocusLoss(bool value) { m_closeOnFocusLoss 
 void NavigationController::setWindowActivated(bool value) {
   if (m_windowActivated == value) return;
 
-  if (!value && m_closeOnFocusLoss) { closeWindow(); }
+  if (!value && m_closeOnFocusLoss && m_layerShellLayerOverride != QStringLiteral("background")) {
+    closeWindow();
+  }
 
   m_windowActivated = value;
   emit windowActivationChanged(value);
 }
 
 void NavigationController::toggleWindow() {
+  if (m_windowOpened && m_layerShellLayerOverride == QStringLiteral("background")) { closeWindow(); }
   if (m_windowOpened) {
     if (m_windowActivated) {
       closeWindow();

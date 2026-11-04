@@ -41,6 +41,7 @@
 #include <QGuiApplication>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QQuickItem>
 #include <QScreen>
 #include <QWindow>
 #include <QKeyEvent>
@@ -51,6 +52,14 @@
 #include <memory>
 #include <glaze/glaze.hpp>
 
+// Qt Quick exports these hooks for mapping shortcuts to a different input
+// window (also used by Qt Quick Templates' shortcut context matcher).
+QT_BEGIN_NAMESPACE
+using ShortcutContextMatcher = bool (*)(QObject *, Qt::ShortcutContext);
+Q_QUICK_EXPORT ShortcutContextMatcher qt_quick_shortcut_context_matcher();
+Q_QUICK_EXPORT void qt_quick_set_shortcut_context_matcher(ShortcutContextMatcher matcher);
+QT_END_NAMESPACE
+
 struct SavedWindowPosition {
   std::string screen;
   int x = 0;
@@ -58,6 +67,23 @@ struct SavedWindowPosition {
 };
 
 namespace {
+
+ShortcutContextMatcher previousShortcutContextMatcher = nullptr;
+
+bool workspaceShortcutContextMatcher(QObject *object, Qt::ShortcutContext context) {
+  auto *focusWindow = QGuiApplication::focusWindow();
+  auto *visualWindow =
+      focusWindow ? focusWindow->property("vicinaeWorkspaceVisualWindow").value<QQuickWindow *>() : nullptr;
+  if (visualWindow && context == Qt::WindowShortcut) {
+    auto *owner = object;
+    while (owner && !owner->isWindowType()) {
+      owner = owner->parent();
+      if (auto *item = qobject_cast<QQuickItem *>(owner)) owner = item->window();
+    }
+    if (owner == visualWindow) return true;
+  }
+  return previousShortcutContextMatcher && previousShortcutContextMatcher(object, context);
+}
 
 constexpr int DRAG_SNAP_DISTANCE = 32;
 constexpr int MIN_VISIBLE_ON_RESTORE = 40;
@@ -99,8 +125,7 @@ LauncherWindow::LauncherWindow(ApplicationContext &ctx, QObject *parent)
   connect(nav, &NavigationController::windowVisiblityChanged, this, &LauncherWindow::handleVisibilityChanged);
   connect(nav, &NavigationController::layerShellLayerOverrideChanged, this, [this]() {
     // Skip while closing so clearing the override doesn't flash top over windows.
-    if (m_ctx.navigation->isWindowOpened())
-      updateLayerShellProps();
+    if (m_ctx.navigation->isWindowOpened()) updateLayerShellProps();
   });
 
   // View lifecycle - viewPoped fires BEFORE ViewState is destroyed
@@ -314,6 +339,40 @@ LauncherWindow::LauncherWindow(ApplicationContext &ctx, QObject *parent)
 }
 
 bool LauncherWindow::eventFilter(QObject *obj, QEvent *event) {
+  if (obj == m_workspaceInputWindow && m_window && m_lsLayer == 0) {
+    switch (event->type()) {
+    case QEvent::FocusIn:
+    case QEvent::FocusOut:
+    case QEvent::KeyPress:
+    case QEvent::KeyRelease:
+    case QEvent::ShortcutOverride:
+    case QEvent::InputMethod:
+    case QEvent::InputMethodQuery: {
+      if (eventFilter(m_window, event)) return true;
+      auto *target = m_window->contentItem()->scopedFocusItem();
+      while (target && target->isFocusScope() && target->scopedFocusItem())
+        target = target->scopedFocusItem();
+      while (target) {
+        QCoreApplication::sendEvent(target, event);
+        if (event->isAccepted()) break;
+        target = target->parentItem();
+      }
+      return true;
+    }
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::MouseButtonDblClick:
+    case QEvent::MouseMove:
+    case QEvent::Wheel: {
+      // Both surfaces cover the same output, so local coordinates agree.
+      QCoreApplication::sendEvent(m_window, event);
+      m_workspaceInputWindow->setCursor(m_window->cursor());
+      return true;
+    }
+    default:
+      break;
+    }
+  }
   if (obj != m_window) return QObject::eventFilter(obj, event);
 
   // makes sure we keep our state in sync if the compositor is the one raising/closing the window for some
@@ -401,6 +460,23 @@ void LauncherWindow::loadRoot() {
   }
   if (!m_window) { qWarning() << "launcher window did not load synchronously: no root window"; }
 
+  if (m_workspaceInputWindow) {
+    m_workspaceInputWindow->setProperty("vicinaeWorkspaceVisualWindow", QVariant::fromValue(m_window));
+    if (!previousShortcutContextMatcher) {
+      previousShortcutContextMatcher = qt_quick_shortcut_context_matcher();
+      qt_quick_set_shortcut_context_matcher(workspaceShortcutContextMatcher);
+    }
+    // Shortcuts capture the context matcher when they register. Refresh the
+    // ones instantiated before the input window was connected.
+    for (auto *object : m_window->findChildren<QObject *>()) {
+      if (!object->inherits("QQuickShortcut")) continue;
+      const auto context = object->property("context");
+      object->setProperty("context", context.toInt() == Qt::WindowShortcut ? Qt::ApplicationShortcut
+                                                                           : Qt::WindowShortcut);
+      object->setProperty("context", context);
+    }
+  }
+
   applyWindowConfig();
 
   if (m_hudBridge) {
@@ -424,7 +500,7 @@ void LauncherWindow::loadRoot() {
       if (!m_window) return;
       // losing focus to our own file dialog or to a selection capture is not user focus loss
       if (m_pendingLauncherFileChoice || LauncherWindowPlatform::foregroundLent()) return;
-      m_ctx.navigation->setWindowActivated(m_window->isActive());
+      if (m_lsLayer != 0) m_ctx.navigation->setWindowActivated(m_window->isActive());
     });
     m_window->installEventFilter(this);
   }
@@ -434,6 +510,7 @@ void LauncherWindow::unloadRoot() {
   if (m_dragOverlayVisible) endWindowDrag();
   m_ctx.navigation->setWindow(nullptr);
   m_window = nullptr;
+  m_workspaceInputWindow = nullptr;
   m_dragOverlayWindow = nullptr;
   const auto roots = m_engine.rootObjects();
   for (auto *root : roots)
@@ -735,6 +812,15 @@ void LauncherWindow::beginWindowDrag() {
 
 void LauncherWindow::registerDragOverlay(QQuickWindow *window) { m_dragOverlayWindow = window; }
 
+void LauncherWindow::registerWorkspaceInputWindow(QQuickWindow *window) {
+  m_workspaceInputWindow = window;
+  window->installEventFilter(this);
+  connect(window, &QQuickWindow::activeChanged, this, [this]() {
+    if (m_workspaceInputWindow && m_lsLayer == 0)
+      m_ctx.navigation->setWindowActivated(m_workspaceInputWindow->isActive());
+  });
+}
+
 void LauncherWindow::updateWindowDrag() {
   if (!m_window || !m_dragOverlayVisible) return;
 
@@ -911,7 +997,8 @@ void LauncherWindow::updateLayerShellProps() {
 
   auto &cfg = m_ctx.services->config()->value();
   const auto &lc = cfg.launcherWindow.layerShell;
-  const auto layerName = m_ctx.navigation->layerShellLayerOverride().value_or(QString::fromStdString(lc.layer));
+  const auto layerName =
+      m_ctx.navigation->layerShellLayerOverride().value_or(QString::fromStdString(lc.layer));
 
   // LayerShellQt::Window::Layer{Background,Bottom,Top,Overlay} == 0..3
   int layer = 2; // Top
@@ -924,6 +1011,7 @@ void LauncherWindow::updateLayerShellProps() {
 
   int ki = 2;                                                                   // OnDemand
   if (lc.keyboardInteractivity == "exclusive" && !cfg.closeOnFocusLoss) ki = 1; // Exclusive
+  if (layer == 0) ki = 0; // The stationary visual surface never takes focus.
 
   bool changed = false;
   if (m_lsLayer != layer) {

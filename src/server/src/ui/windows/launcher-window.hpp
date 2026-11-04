@@ -134,6 +134,7 @@ public:
   Q_INVOKABLE void updateWindowDrag();
   Q_INVOKABLE void endWindowDrag();
   Q_INVOKABLE void registerDragOverlay(QQuickWindow *window);
+  Q_INVOKABLE void registerWorkspaceInputWindow(QQuickWindow *window);
 
   bool dragOverlayVisible() const { return m_dragOverlayVisible; }
   QRect dragOverlayGeometry() const { return m_dragOverlayGeometry; }
@@ -204,6 +205,7 @@ private:
 
   QQmlApplicationEngine m_engine;
   QQuickWindow *m_window = nullptr;
+  QQuickWindow *m_workspaceInputWindow = nullptr;
   QString m_defaultWindowTitle;
   QString m_pendingWindowTitle;
   bool m_compacted = false;

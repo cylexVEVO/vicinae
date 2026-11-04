@@ -5,6 +5,7 @@ import Vicinae
 
 LauncherWindow {
     id: root
+    autoPlaceOnShow: false
     shadowPadding: Config.shadowSize
     width: Screen.width
     height: Screen.height
@@ -17,6 +18,24 @@ LauncherWindow {
     LayerShell.Window.wantsToBeOnActiveScreen: true
     LayerShell.Window.layer: Launcher.lsLayer
     LayerShell.Window.keyboardInteractivity: Launcher.lsKeyboardInteractivity
+
+    // Niri moves bottom layers with workspaces. Render in its stationary
+    // backdrop, and receive input through a separate, transparent bottom layer.
+    Window {
+        id: inputWindow
+        screen: root.screen
+        width: root.width
+        height: root.height
+        color: "transparent"
+        flags: Qt.FramelessWindowHint
+        visible: root.visible && Launcher.lsLayer === LayerShell.Window.LayerBackground
+        LayerShell.Window.scope: "vicinae-input"
+        LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorBottom | LayerShell.Window.AnchorLeft | LayerShell.Window.AnchorRight
+        LayerShell.Window.exclusionZone: -1
+        LayerShell.Window.layer: LayerShell.Window.LayerBottom
+        LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityExclusive
+        Component.onCompleted: Launcher.registerWorkspaceInputWindow(inputWindow)
+    }
 
     MouseArea {
         anchors.fill: parent

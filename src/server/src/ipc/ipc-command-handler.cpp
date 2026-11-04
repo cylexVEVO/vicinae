@@ -86,6 +86,9 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
   }
 
   if (command == "close") {
+    if (query.queryItemValue("workspace") == "true" &&
+        m_ctx.navigation->layerShellLayerOverride() != QStringLiteral("background"))
+      return {};
     if (!m_ctx.navigation->isWindowOpened()) return std::unexpected("Already closed");
 
     CloseWindowOptions opts;
@@ -104,6 +107,15 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
   }
 
   if (command == "open") {
+    // Background maintenance must not demote a launcher explicitly opened by
+    // the user. A workspace activation can request taking ownership again.
+    if (query.queryItemValue("workspace") == "true" && m_ctx.navigation->isWindowOpened() &&
+        m_ctx.navigation->layerShellLayerOverride() != QStringLiteral("background") &&
+        query.queryItemValue("force") != "true")
+      return {};
+    if (query.queryItemValue("workspace") != "true" &&
+        m_ctx.navigation->layerShellLayerOverride() == QStringLiteral("background"))
+      m_ctx.navigation->closeWindow();
     if (query.hasQueryItem("layer")) {
       const auto layer = query.queryItemValue("layer", QUrl::FullyDecoded).toLower();
       if (layer != "top" && layer != "overlay" && layer != "bottom" && layer != "background") {
@@ -133,6 +145,9 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
   }
 
   if (command == "launch") {
+    if (m_ctx.navigation->layerShellLayerOverride() == QStringLiteral("background"))
+      m_ctx.navigation->closeWindow();
+    m_ctx.navigation->setLayerShellLayerOverride(std::nullopt);
     if (auto item = query.queryItemValue("toggle", QUrl::FullyDecoded);
         item == "true" && m_ctx.navigation->isWindowOpened()) {
       m_ctx.navigation->closeWindow();
