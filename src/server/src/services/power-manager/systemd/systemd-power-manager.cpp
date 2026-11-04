@@ -4,6 +4,7 @@
 #include <qdbusconnection.h>
 #include <qdbusmetatype.h>
 #include <qguiapplication.h>
+#include <qprocess.h>
 #include <qtdbusglobal.h>
 #include <qtimer.h>
 #include <unistd.h>
@@ -27,6 +28,17 @@ bool SystemdPowerManager::lock() {
 }
 
 bool SystemdPowerManager::logout() {
+  if (Environment::isNiriCompositor()) {
+    // End the compositor's managed session instead of killing only the logind session.
+    const auto status = QProcess::execute("niri", {"msg", "action", "quit", "--skip-confirmation"});
+    if (status != 0) {
+      qWarning() << "Failed to request Niri logout:" << status;
+      return false;
+    }
+    QTimer::singleShot(0, qApp, &QGuiApplication::quit);
+    return true;
+  }
+
   if (Environment::isPlasmaDesktop()) {
     QDBusInterface ksmserver("org.kde.Shutdown", "/Shutdown", "org.kde.Shutdown",
                              QDBusConnection::sessionBus());
