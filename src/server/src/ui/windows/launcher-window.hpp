@@ -23,6 +23,7 @@ class PlatformBridge;
 class ThemeBridge;
 class ViewHostBase;
 class QQuickWindow;
+class QPropertyAnimation;
 class QScreen;
 class BaseView;
 class DialogContentWidget;
@@ -205,6 +206,7 @@ private:
 
   QQmlApplicationEngine m_engine;
   QQuickWindow *m_window = nullptr;
+  QPropertyAnimation *m_visibilityAnimation = nullptr;
   QQuickWindow *m_workspaceInputWindow = nullptr;
   QString m_defaultWindowTitle;
   QString m_pendingWindowTitle;

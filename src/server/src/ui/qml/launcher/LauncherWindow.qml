@@ -27,6 +27,7 @@ LauncherWindowBase {
     property bool shadowEnabled: shadowPadding > 0
     property bool nativeChrome: false
     property bool autoPlaceOnShow: true
+    property bool presentationOpen: false
     property int panelX: shadowPadding
     property int panelY: shadowPadding
     property Component contentEffect: null
@@ -482,17 +483,16 @@ LauncherWindowBase {
     Connections {
         target: Launcher.nav
         function onWindowVisiblityChanged(visible) {
+            root.presentationOpen = visible;
             if (visible) {
                 root.aboutToShow();
                 if (root.autoPlaceOnShow && !Launcher.restoreWindowPosition())
                     Launcher.positionOnCursorScreen();
-                root.visible = true;
-                root.raise();
-                root.requestActivate();
-                searchBar.focusInput();
+                Qt.callLater(() => {
+                    if (root.presentationOpen)
+                        searchBar.focusInput();
+                });
                 root.shown();
-            } else {
-                root.visible = false;
             }
         }
     }

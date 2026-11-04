@@ -28,8 +28,10 @@ class QWindow;
 enum class PopToRootType : std::uint8_t { Default, Immediate, Suspended };
 
 struct CloseWindowOptions {
+  enum class Animation { Quick, Workspace, Instant };
   PopToRootType popToRootType = PopToRootType::Default;
   bool clearRootSearch = false; // has no effect if we do not pop to root
+  Animation animation = Animation::Quick;
 };
 
 struct PopToRootOptions {
@@ -136,6 +138,7 @@ public:
   Q_INVOKABLE void showWindow();
   Q_INVOKABLE void toggleWindow();
   bool isWindowOpened() const;
+  CloseWindowOptions::Animation closeAnimation() const { return m_closeAnimation; }
   void requestWindowSize(QSize size);
 
   /**
@@ -290,6 +293,7 @@ private:
   const BaseView *topView() const;
 
   bool m_windowOpened = false;
+  CloseWindowOptions::Animation m_closeAnimation = CloseWindowOptions::Animation::Quick;
   bool m_windowActivated = false;
   bool m_isPanelOpened = false;
   bool m_popToRootOnClose = false;

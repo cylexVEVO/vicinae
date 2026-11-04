@@ -42,6 +42,7 @@
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QQuickItem>
+#include <QPropertyAnimation>
 #include <QScreen>
 #include <QWindow>
 #include <QKeyEvent>
@@ -125,7 +126,13 @@ LauncherWindow::LauncherWindow(ApplicationContext &ctx, QObject *parent)
   connect(nav, &NavigationController::windowVisiblityChanged, this, &LauncherWindow::handleVisibilityChanged);
   connect(nav, &NavigationController::layerShellLayerOverrideChanged, this, [this]() {
     // Skip while closing so clearing the override doesn't flash top over windows.
-    if (m_ctx.navigation->isWindowOpened()) updateLayerShellProps();
+    if (m_ctx.navigation->isWindowOpened()) {
+      updateLayerShellProps();
+      if (m_lsLayer == 0 && m_window && m_visibilityAnimation) {
+        m_visibilityAnimation->stop();
+        m_window->contentItem()->setOpacity(1.0);
+      }
+    }
   });
 
   // View lifecycle - viewPoped fires BEFORE ViewState is destroyed
@@ -420,11 +427,22 @@ bool LauncherWindow::eventFilter(QObject *obj, QEvent *event) {
 }
 
 void LauncherWindow::handleVisibilityChanged(bool visible) {
-  if (!m_window) return;
+  if (!m_window || !m_visibilityAnimation) return;
+
+  m_visibilityAnimation->stop();
+  auto *content = m_window->contentItem();
+  content->setEnabled(visible);
+  constexpr int QUICK_FADE_MS = 120;
+  constexpr int WORKSPACE_FADE_MS = 600;
+  int duration = QUICK_FADE_MS;
 
   if (visible) {
     applyWindowConfig();
     tryCompaction();
+    if (!m_window->isVisible()) content->setOpacity(0.0);
+    if (m_lsLayer == 0) duration = 0;
+    // Workspace reveals must be fully painted before the next frame.
+    if (duration == 0) content->setOpacity(1.0);
     m_window->show();
     m_window->raise();
     LauncherWindowPlatform::grantForeground();
@@ -436,9 +454,30 @@ void LauncherWindow::handleVisibilityChanged(bool visible) {
   } else {
     LauncherWindowPlatform::suppressHeldKeyReleases();
     if (m_dragOverlayVisible) endWindowDrag();
-    m_window->hide();
-    updateWindowTitle();
+    switch (m_ctx.navigation->closeAnimation()) {
+    case CloseWindowOptions::Animation::Quick:
+      break;
+    case CloseWindowOptions::Animation::Workspace:
+      duration = WORKSPACE_FADE_MS;
+      break;
+    case CloseWindowOptions::Animation::Instant:
+      duration = 0;
+      break;
+    }
   }
+  if (duration == 0) {
+    content->setOpacity(visible ? 1.0 : 0.0);
+    if (!visible) {
+      m_window->hide();
+      updateWindowTitle();
+    }
+    return;
+  }
+  m_visibilityAnimation->setDuration(duration);
+  m_visibilityAnimation->setStartValue(content->opacity());
+  m_visibilityAnimation->setEndValue(visible ? 1.0 : 0.0);
+  m_visibilityAnimation->setEasingCurve(QEasingCurve::OutCubic);
+  m_visibilityAnimation->start();
 }
 
 void LauncherWindow::loadRoot() {
@@ -459,6 +498,17 @@ void LauncherWindow::loadRoot() {
     if (m_window) { m_defaultWindowTitle = m_window->title(); }
   }
   if (!m_window) { qWarning() << "launcher window did not load synchronously: no root window"; }
+
+  if (m_window) {
+    // Animate the scene, since native window opacity is not portable on Wayland.
+    m_visibilityAnimation = new QPropertyAnimation(m_window->contentItem(), "opacity", m_window);
+    connect(m_visibilityAnimation, &QPropertyAnimation::finished, this, [this]() {
+      if (m_window && !m_ctx.navigation->isWindowOpened()) {
+        m_window->hide();
+        updateWindowTitle();
+      }
+    });
+  }
 
   if (m_workspaceInputWindow) {
     m_workspaceInputWindow->setProperty("vicinaeWorkspaceVisualWindow", QVariant::fromValue(m_window));
@@ -508,6 +558,8 @@ void LauncherWindow::loadRoot() {
 
 void LauncherWindow::unloadRoot() {
   if (m_dragOverlayVisible) endWindowDrag();
+  if (m_visibilityAnimation) m_visibilityAnimation->stop();
+  m_visibilityAnimation = nullptr;
   m_ctx.navigation->setWindow(nullptr);
   m_window = nullptr;
   m_workspaceInputWindow = nullptr;

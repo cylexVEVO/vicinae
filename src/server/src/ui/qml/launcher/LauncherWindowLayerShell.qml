@@ -28,7 +28,7 @@ LauncherWindow {
         height: root.height
         color: "transparent"
         flags: Qt.FramelessWindowHint
-        visible: root.visible && Launcher.lsLayer === LayerShell.Window.LayerBackground
+        visible: root.visible && root.presentationOpen && Launcher.lsLayer === LayerShell.Window.LayerBackground
         LayerShell.Window.scope: "vicinae-input"
         LayerShell.Window.anchors: LayerShell.Window.AnchorTop | LayerShell.Window.AnchorBottom | LayerShell.Window.AnchorLeft | LayerShell.Window.AnchorRight
         LayerShell.Window.exclusionZone: -1

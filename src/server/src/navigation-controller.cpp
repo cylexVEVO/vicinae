@@ -331,6 +331,7 @@ void NavigationController::closeWindow(const CloseWindowOptions &settings) {
 
   m_pendingPopToRoot = PendingPopToRoot{.type = type, .clearSearch = settings.clearRootSearch};
   m_windowOpened = false;
+  m_closeAnimation = settings.animation;
   setLayerShellLayerOverride(std::nullopt);
   emit windowVisiblityChanged(false);
 }

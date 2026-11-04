@@ -92,6 +92,9 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     if (!m_ctx.navigation->isWindowOpened()) return std::unexpected("Already closed");
 
     CloseWindowOptions opts;
+    if (query.queryItemValue("workspace") == "true")
+      opts.animation = CloseWindowOptions::Animation::Workspace;
+    if (query.queryItemValue("fade") == "instant") opts.animation = CloseWindowOptions::Animation::Instant;
 
     if (auto text = query.queryItemValue("popToRootType", QUrl::FullyDecoded); !text.isEmpty()) {
       if (text == "immediate") { opts.popToRootType = PopToRootType::Immediate; }
